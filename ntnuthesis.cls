@@ -30,7 +30,7 @@
 %
 % Specifies a custom date:
 % DATE FORMAT: DD  MM  YYYY
-\newdate{date}{20}{06}{2022}
+\newdate{date}{20}{05}{2023}
 
 % One or twosided paging
 \newcommand{\paging}{twoside}
@@ -201,10 +201,14 @@
 
 \RequirePackage[utf8]{inputenc}             % for special characters in input
 \RequirePackage[T1]{fontenc}                % modern font encoding
-\RequirePackage[charter, cal=cmcal]{mathdesign} % main font with math support
-\RequirePackage[scaled=.88]{berasans}       % sans serif font
+
+% \RequirePackage[charter, cal=cmcal]{mathdesign} % main font with math support
+% \RequirePackage[scaled=.88]{berasans}       % sans serif font
+% \RequirePackage[scaled=.82,defaultsans]{opensans} % monospace font (for code)
+
+\RequirePackage{amsfonts}
 \RequirePackage[scaled=.82]{DejaVuSansMono} % monospace font (for code)
-\RequirePackage[scaled=.82,defaultsans]{opensans} % monospace font (for code)
+
 \RequirePackage{listings}                   % code listings
 \RequirePackage{etoolbox}                   % fixing list of listings spacing
 \RequirePackage{babel}                      % language specifics
