@@ -10,6 +10,26 @@
 
 \input{glossary.tex} % add glossary and acronym lists before document
 
+\def\ceq#1{%
+    \begingroup
+    \let\oldtheequation\theequation%
+    \def\theequation{\oldtheequation~\cite{#1}}%
+    \equation}
+\def\endceq{\endequation\endgroup}
+
+\usepackage{titlesec}
+\titleformat*{\subsubsection}{\center\sc}
+\newcommand\scalemath[2]{\scalebox{#1}{\mbox{\ensuremath{\displaystyle #2}}}}
+
+\usepackage{bm}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
+\newcommand\Mat[1]{\bm{\mathrm #1}}
+\renewcommand\vec[1]{\mathbf{#1}}
+\newcommand\Tr{\mathrm T}
+\DeclareMathOperator{\tr}{tr}
+
 \begin{document}
 
 \input{chapters/0a-abstract.tex}

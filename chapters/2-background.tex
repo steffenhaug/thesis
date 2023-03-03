@@ -1,35 +1,932 @@
 \chapter{Background}
 \label{chap:background}
 
+% \section{Moore's Law}
+% \label{sec:moore}
+% The performance growth provided by Moores law is coming to an end
+% \cite{ziogas2019quantum}.
+
 \section{Amdahl's Law}
 \label{sec:amdahl}
+Amdahl's law,
+\begin{equation}
+\label{eq:amdahl}
+    S = \frac 1 {1 - p + \frac p s} \text,
+\end{equation}
+is a formula for the theoretical reduction in latency $S$ in execution of a task.
+Given a program of which a proportion $p$ can benefit from a speedup $s$,
+$S$ is the theoretical speedup we can achieve.
+Amdahl's law imposes a {\em very strong} restriction for what kind of speedups we
+can expect to see. If an optimization affects proportion $p$ of the program,
+the {\em absolute best} speedup we can hope to see is
+$$
+S = \frac 1 {1 - p} \text.
+$$
+Thus, if a program is spending a proportion $p_m$ of time doing memory accesses,
+and a proportion $p_f$ of time running floating point operations, the theoretical
+speedup we can achieve with increased floating point performance $s_f$ and increased
+memory performance $s_m$ is
+$$
+S = \frac 1 {\frac {p_m} {s_m} + \frac {p_f} {s_f}}.
+$$
+In other words, if NVIDIA keeps giving us more FLOPS, but memory access remains slow,
+we will eventually hit diminishing returns.
+It turns out that that is exactly what is happening.
 
-\section{Data Movement Bottleneck}
+\section{Data Movement}
 \label{sec:dops}
+Due to Amdahl's law and massive improvements in floating point performance,
+over the recent years, optimizing memory access is becoming a more and more
+important aspect of performance engineering
+\cite{hoefler2021datamovement, hoefler2017trends}.
+For an extreme example, Torsten Hoefler and his colleagues found 
+in their case study on optimizing transformers\footnote{
+    Transformers is a type of neural network architecture.
+    The details are not important to this thesis, as it is not
+    concerned with neural networks.
+},
+that while training transformer neural networks, 
+in which {\em over 99\% of arithmetic operations} are performed in a 
+general matrix multiply,
+existing frameworks did not utilize the GPUs well
+\cite{hoefler2021datamovement}.
+They found that optimized implementations only achieved
+30\% of peak GPU throughput\cite{hoefler2021datamovement}.
+% reduced data movement by 22.92%
+% better data layouts for matrix matrix multiply speed up by 52%
+% achieve 1.30x performance in training over general purpose training frameworks
+By optimizing {\em only data movement},
+Hoeflers team managed to reduce data movement by 22.92\%,
+and they found better memory layouts that improved the performance
+of a general matrix-matrix multiply by 52\% \cite{hoefler2021datamovement}.
+In total, they achieved a $1.30\times$ imrovement in performance
+compared to a general purpose training frameworks
+\cite{hoefler2021datamovement}.
+
+Obviously, these results are obtained in the context of training
+neural networks.
+However, most of the workload is general matrix-matrix multiplications,
+which are ubiqutious in every branch of scientific- and 
+high-performance computing.
+% citation needed ?
+There is nothing particularily special about training neural
+networks; it is just a very compute-intensive workload
+\cite{hoefler2021datamovement}.
+At its heart, training neural networks employs the same kind of linear
+algebra used in all forms of high-performance computing \cite{citation needed}.
+It is one example of what is at the time of writing the consensus in the 
+high-performance computing community: The cost of data movement is the dominant
+factor in terms of performance
+\cite{hoefler2017trends}.
+
+The performance of a quantum transport solver was increased by {\em two
+orders of magnitude} per-atom by a data centric restructuring
+\cite{ziogas2019quantum}.
+This demonstrates again how a complicated simulation can be made more efficient
+by making modifications to data movement alone.
+Ziogas et. al. conclude that overcoming scaling bottlenecks today require
+reformulations based on data centric models. 
+
+\subsubsection{``Data movement is all you need''}
+
+The key insight appears to be that attention to data movement is critical in all
+high-performance applications.
+As the industries' insatiable hunger for data processing drives datasets'
+increase in size, more and more data needs to be moved.
+While there are efforts to alleviate the problem somewhat at a hardware level,
+such as in-memory compute, % citation neded?
+engineers need to understand the memory access patterns of their applications,
+and find ways to optimize memory access by reducing data movement.
+
+\section{Smoothed-particle Hydrodynamics}
+\label{sec:sph}
+\textit{This section is partially based on work from my autumn
+project, but significantly elaborated.}\\[.05em]
+
+\noindent
+Smoothed-particle hydrodynamics (SPH) is a numerical technique for simulating fluids.
+The idea is to represent a fluid as a set of {\em moving} discrete particles that interact with
+eachother, instead of as samples on a static lattice.
+Each particle has a number of properties, such as position, density and velocity.
+To update the simulation, each particles properties are updated based on interactions
+with ``nearby particles''. This Lagrangian nature gives SPH some very useful properties in comparison
+to traditional Eulerian approaches where the sample points sit in a fixed grid, but also poses some
+unique challenges.
+
+Since SPH tracks the positions of individual particles, it easily captures deformation of the fluid,
+particularily at free surfaces.
+\cite{citation needed}
+In multi-phase systems, SPH can much more easily capture phenomena such as
+mixing.
+\cite{citation needed}
+This makes SPH particularily well-suited for snow simulation, as snow is a material with very complex compression
+characteristics.
+\cite{citation needed}
+Moreover, snow almost always has a large free surface in contact with air, due to the nature of
+phenomena that are interesting to simulate, such as avalanches and fracturing.
+These features would be quite complicated to keep track of in a purely Eulerian simulation.
+Since mass is associated with particles, conservation of
+mass is trivially guaranteed. This is extremely important for many aspects of fluid simulation to
+be consistent with physical laws.
+\cite{citation needed}
+
+\subsection{Derivation of SPH}
+We are interested in calculating samples of a field $u$ at the positions of our particles.
+The basic premise of SPH is that $u$ can be described as its convolution with Dirac's delta function.
+\cite{sph_techniques}
+One of the delta functions defining properties is that convolution by it leaves any field unchanged:
+\begin{equation}
+    \label{eq:delta}
+    u(x) = \int u(V) \delta(x - V) \mathrm d V
+\end{equation}
+However, since there is no way to {\em evaluate} the delta function
+(it is not a function per se), we relax this definition to use
+a smoothed out distribution ``similar'' to the delta function.
+{\em Similar}, in this context, means that we pick a distribution that
+approaces the delta function in the limit as the smoothing radius goes
+to zero.
+
+One candidate for such a distribution is a regular bell curve.
+It is known from statistics that as the standard deviation approaces zero,
+the normal distribution approaces the delta function.
+\cite{citation needed}
+However, as the bell curve has infinitely long tails, it is computationally
+unwieldy to convolve a field by it, since we need to integrate over the
+entire domain.
+Instead, we use a function that looks {\em very similar} to a bell curve,
+constructed from Beziér splines \cite{sph_techniques} to have compact support.
+This function is known as the {\em smoothing kernel}, and is usually denoted $W$:
+\begin{equation}
+    u \approx \int u(V) W(x - V) \mathrm dV \text.
+\end{equation}
+This continuous approximation of the field is discretized by a Riemann-style sum
+for particle $i$ at position $x_i$ as
+\begin{equation}
+    u_i = \sum u_j W_{ij} \frac {m_j} {\rho_j} \text.
+\end{equation}
+The sum is taken over the particles $j$ that are ``close enough'' to $i$ to contribute
+to $u$, in other words where the smoothing kernel is non-zero.
+There is one subtlety here to appreciate, namely that the continuous integral is
+over volume elements $\mathrm dV$.
+Loosely speaking, $\mathrm dV \approx m_j / \rho_j$.
+What we are essentially saying is that when we divide
+continuous space into discrete smoothed particles, the volume of a ``particle'' is
+its mass divided by its density.
+We can adopt the notation for the volume by Gissler et. al., $V_j = m_j / \rho_j$,
+to remove some clutter from the following equations.
+
+By linearity of the differential operators, spatial derivatives of $u$ can be
+computed using the gradient of $W$.
+This is straight forward: Linearity allows interchanging the order of
+scaling and summation with differentiation.
+\begin{ceq}{sph_techniques}
+\def\arraystretch{3}
+\scalebox{.8}{%
+\begin{tabular}{lc}
+\sc Gradient &
+    $\displaystyle (\nabla u)_i \approx
+        \sum_j V_j u_j (\nabla W)_{ij}$ \\
+\sc Divergence & 
+    $\displaystyle (\nabla \cdot \vec u)_i \approx
+        \sum_j V_j \vec u_j \cdot (\nabla W)_{ij} $ \\
+\sc Vector gradient & 
+    $\displaystyle (\nabla \vec u)_i \approx
+        \sum_j V_j \vec u_j \otimes (\nabla W)_{ij}$ \\
+\sc Laplacian & 
+    $\displaystyle (\nabla^2 u)_i = (\nabla \cdot (\nabla u))_i \approx 
+        \sum_j V_j u_j \nabla_i^2  W_{ij}$
+\end{tabular}
+}
+\end{ceq}
+Unfortunately, while these direct derivatives are simple and
+demonstrates the point in a clear way, they lead to poor approximation
+quality and unstable simulations.
+\cite{sph_techniques}
+
+\subsection{Improved spatial derivatives}
+There are several alternative formulations of
+discrete spatial derivatives that have emerged over time
+to improve the approximation quality.
+They have slightly different properties, and are therefor suitable
+for different types of fields.
+
+\subsubsection*{Difference Formula}
+By starting with the chain rule,
+\begin{equation*}
+\def\arraystretch{3}
+\scalebox{.8}{%
+\begin{tabular}{lc}
+    \sc Gradient   & $\nabla u(1x) = \nabla u - u \nabla 1 \text{, } $ \\
+    \sc Divergence & $\nabla \cdot \vec u(1x) = \nabla \cdot \vec u - \vec u (\nabla \cdot 1) $ \\
+    \sc Vector gradient & $\nabla \vec u(1x) = \nabla \vec u - \vec u (\nabla \vec 1) $
+\end{tabular}
+}
+\end{equation*}
+we can approximate the gradients (divergences, vector gradients) on the right hand side:
+\begin{equation*}
+\def\arraystretch{3}
+\scalebox{.8}{%
+\begin{tabular}{lc}
+    \sc Gradient & $\displaystyle
+        (\nabla u)_i \approx
+            \sum_j V_j u_j (\nabla W)_{ij}
+      + u_i \sum V_i (\nabla W)_{ij} $ \\
+    \sc Divergence & $\displaystyle
+        (\nabla \cdot \vec u)_i \approx
+            \sum_j V_j \vec u_j \cdot (\nabla W)_{ij}
+      + \vec u_i \sum V_i \vec 1 \cdot (\nabla W)_{ij} $ \\
+    \sc Vector gradient & $\displaystyle
+        (\nabla \vec u)_i \approx
+            \sum_j V_j \vec u_j \otimes (\nabla W)_{ij}
+      + \vec u_i \sum V_i \vec{1} \otimes (\nabla W)_{ij} $
+\end{tabular}
+}
+\end{equation*}
+Which, after some algebra autopilot, gives the approximations
+
+\begin{equation}
+    \label{eq:difference-formula}
+    \def\arraystretch{3}
+    \scalebox{.8}{%
+        \begin{tabular}{lc}
+            \sc Gradient & $
+            (\nabla u)_i \approx
+            \sum_j V_j (u_j - u_i) (\nabla W)_{ij} $ \\
+            \sc Divergence & $
+            (\nabla \cdot \vec u)_i \approx
+            \sum_j V_j (\vec u_j - \vec u_i) \cdot (\nabla W)_{ij} $ \\
+            \sc Vector gradient & $
+            (\nabla \vec u)_i \approx
+            \sum_j V_j (\vec u_j - \vec u_i) \otimes (\nabla W)_{ij} $
+        \end{tabular}
+        }
+\end{equation}
+The approximations are 0th-order accurate.
+\cite{sph_techniques}
+This gives a more accurate discretization, but still linear error.
+In the case of the gradient, linear accuracy can be restored at the 
+cost of computing a correction matrix.
+\cite{sph_techniques,icsph}
+\begin{equation}
+    \label{eq:correction-matrix}
+    L_i = \left( \sum_j V_j (\nabla W)_{ij} \otimes (x_j - x_i) \right)^{-1}
+\end{equation}
+While more accurate, the difference formulae does unfortunately not
+satisfy conservation of momentum \cite{sph_techniques}.
+This makes it unsuitable for quantities that directly affect particle
+trajectories, such as pressure \cite{sph_techniques, icsph}.
+
+
+\subsubsection{Symmetric Formula}
+We perform a similar trick, using the chain rule with the particle
+density $\rho$ to some power $n$ \cite{monaghan05}.
+$$
+\nabla p(x \rho^n) = \nabla f \rho^n + n \rho^n p \nabla \rho
+$$
+By setting $n = -1$, some algebra autopilot gives
+
+\begin{equation}
+    \label{eq:pressure-grad}
+    \nabla p \approx \sum_j V_j (p_j + p_i) (\nabla W)_{ij} \text.
+\end{equation}
+This formula satisfies conservation of momentum, but it is
+less accurate than the difference formula \cite{sph_techniques}.
+To summarize, we use the symmetric formula to compute the pressure
+gradient, and we use the difference formula to calculate other
+fields that don't directly impact the particle trajectories,
+as suggested by Koschier et. al.
+
+\subsubsection*{Better discretizaton of the Laplacian}
+Koschier et. al. gives an improved formula, in a similar fashion to the difference formula,
+for the Laplacian of a scalar field.
+However, Gissler et. al. uses a different discretization based on the definition
+of the Laplacian as the divergence of the gradient of a field, and
+discretizes it first using the symmetric formula for the gradient, and then
+applying the difference formula discretization of the divergence.
+
 
 \section{Explicit \& Implicit Integration}
 \label{sec:int}
 \textit{This section is partially based on work from my autumn
-project, but significantly elaborated.}
+project, but significantly elaborated.}\\[.05em]
 
-\section{SPH Formulation}
-\label{sec:sph}
+\noindent
+Numerical integration methods for differential equations can be 
+divided into two classes:
+{\em Explicit methods}, and {\em implicit methods}.
+Explicit integration methods are relatively straight forward.
+In an explicit method, the future value of the dependent variable
+is given {\em explicitly} as a function of the current value.
+In other words, given a present state of our system, there is
+a straight forward explicit formula for the next state.
+Examples of explicit integration methods include the 
+Euler method, but also more sophisticated methods such as the
+famous Runge-Kutta methods \texttt{ode23} and \texttt{ode45}.
+In an implicit integration method, the value of the dependent variable
+at the next time step is calculated {\em not just in terms of the
+value at the current time step}, but also in terms of itself.
+
+\subsection{Challenges with explicit integration schemes}
+
+Since the new state is given by an explicit formula, explicit integration
+methods are generally quite simple to implement.
+They can usually compute the next state using relatively few
+floating point operations, which in some cases can make them very efficient.
+For these reasons, explicit methods are very popular for a wide
+range of differential equations.
+However, they are notorious for being subject to stability issues
+if the time steps are large, particularily if the equation is
+``stiff'' \cite{ma2501ode}.
+Even adaptive methods  -- methods that adjust the step length as necessary if
+the approximate error is too large -- struggle with stiffness.
+Such methods would grind to a halt as the step length would
+be set prohibitively short.
+
+\subsubsection*{The Euler method}
+The Euler method for numerical integration is the simplest and most famous
+explicit integration method, and is used for several things in the snow simulator.
+Given the slope of a field $y' = f(t, y)$, and an initial value $y^{(t_0)}$,
+\begin{equation}
+    y^{(t+\Delta t)} = y^{(t)} + \Delta t \, f(t^{(t)}, y^{(t)})
+\end{equation}
+
+\subsection{Stiffness}
+\label{sec:stiffness}
+
+\noindent
+In the context of numerical methods for solving differential equations,
+{\em stiffness} refers to a property of a differential equation or 
+system of differential equations that makes 
+it difficult for some numerical methods to accurately and efficiently solve 
+the equation. 
+Formulating an {\em exact} definition of stiffness has proved to be hard;
+there are several non-equivalent definitions used in different textbooks
+\cite{suli_numanal}.
+According to Lambert, ``phenomenon'' is a more appropriate term than
+``property'' \cite{lambert_ode}, which illustrates the difficulty of
+coming up with a precise definition.
+Lambert provides a lengthy discussion of stiffness and the many reasons
+it can arise, and numerous ways to define it.
+
+As far as this thesis is concerned, suffice to say that an ODE or a system
+of ODEs is stiff if when approximated by explicit numerical methods, it forces
+the method to use excessively short time steps.
+This is a sensible definition, because in the general case it is almost impossible
+to determine {\em a priori} if an ODE is actually stiff.
+The reason explicit methods break down is because they have a small region of
+absolute stability
+\cite{suli_numanal}.
+
+Implicit integration methods, while more complicated, have regions of stability 
+of infinite size
+\cite{fausto_nummat}.
+In practice, this means that if the problem at hand is stiff, we are forced to use
+an implicit method.
+The increased complexity of implicit method also means that in general we only reach
+for implicit methods when it is necessary, i. e. if the problem at hand is actually stiff
+\cite[p. 353]{fausto_nummat}.
+
+
+\subsection{Implicit integration schemes}
+\label{sqc:impl_int}
+To clarify, when we say that an implicit method computes the
+dependent variable as a function of itself, what we mean is that
+an implicit integration method involves solving a
+system of equations that relates the next time step to the current
+time step\cite{fausto_nummat}. In general, this system can be nonlinear or otherwise
+complicated to solve\cite{fausto_nummat}. This means that, at least on the surface,
+implicit integration methods are usually more expensive, at least
+in terms of the number of floating point operations required.
+Additionally, implicit solvers are usually much more complicated
+to implement!
+The benefit is that they can be significantly more stable and accurate,
+especially when dealing with problems with a high degree of stiffness.
+For these reasons, implicit methods are usually reached for
+when they are necessary to achieve satisfactory performance.
+
+On the surface, it might seem like implicit integration methods would
+always be a performance downgrade. Clearly, we are doing way more work
+per time step.
+But the situation is not that clear!
+{\bf A more precise integrator allows large time steps.}
+This alone can make up for the lost time:
+Even if calculating a step takes twice as many floating point operations,
+maybe we can also take twice as long time steps?
+This is especially important when calculating a time step involves expensive
+upfront costs, such as the neighborhood search in SPH simulations.
+
+{\bf Solving for the dependent value might be parallelizable.}
+Depending on the form of the equation needed, there might be
+techniques available for solving it that can leverage dedicated hardware.
+Specifically, many iterative methods invove a lot of matrix-matrix-
+and matrix-vector products where utilization of tensor cores could
+drastically reduce the cost of solving for the dependent variable.
+
+\subsubsection*{The Backward Euler method}
+The backward Euler method is one of the simplest {\em implicit} integration methods.
+It is used in the snow simulator to derive the implicit formulation of
+acceleration counteracting pressure and shear stress.
+It looks similar to the explicit Euler method;
+given the slope of a field $y' = f(t, y)$,
+\begin{equation}
+    y^{(t+\Delta t)} = y^{(t)} + \Delta t \, f(t^{(t + \Delta t)}, y^{(t + \Delta t)})
+    \text.
+\end{equation}
+The difference is that the slope is evaluated at $y^{(t + \Delta t)}$, the dependent variable.
+Instead of being directly computable, this gives us the system of equations we need to solve for
+$y^{(t + \Delta t)}$.
+
+
+
+\section{Iterative solvers for linear systems of equations}
+\label{sec:iterative-solvers}
 \textit{This section is partially based on work from my autumn
-project, but significantly elaborated.}
+project, but elaborated to include information about
+the relaxed Jacobi method and
+Biconjugate gradient stabilized descent.}\\[.05em]
+
+\subsubsection*{Contraction mapping and convergence}
+When we are using iterative numerical methods, we very much want to have
+at least {\em some} confidence that they will converge.
+A {\em Banach space} is a vector space with a norm,
+where every sequence of the kind
+$$
+    \lim_{n \rightarrow \infty} ||x_n - x^*|| = 0
+$$
+converges with the limit $x^*$. \cite{tma4145}
+This might seem totally obvious, because the familiar spaces $\mathbb R^n$
+are in fact Banach spaces \cite{tma4145}, so we are used to this behaviour.
+
+A {\em contraction mapping} $T: X \rightarrow X$ can be defined on a Banach space
+as one where $||Tx - Ty|| < k ||x - y||$ for some $k\leq 1$. Intuitively, this is a mapping that ``shrinks''
+the space; things are closer after applying the map.
+
+\begin{theorem}[Banach fixed-point theorem]
+Let $X$ be a Banach space (for example $\mathbb R^n$) and $T : X \rightarrow X$
+a contraction mapping. Then
+\begin{itemize}
+\item There is a fixed point $T(x^*) = x^*$.
+\item The sequence given by a starting element $x_0$ and repeatedly applying $T$ converges to $x^*$.
+\end{itemize}
+\end{theorem}
+
+\noindent This is the rigorous basis for most iteration methods.
+There is a proof in the TMA4145 lecture notes \cite{tma4145}. 
+
+\subsubsection*{The (relaxed) Jacobi Method}
+
+The basic premise is that we want to solve equations of the sort
+$$
+Ax = b
+$$
+and we do this by breaking apart $A$ into a sum of triangular and diagonal matrices,
+and rearranging the equation to create an iteration scheme that converges by the
+Banach fixed-point theorem.
+
+{\bfseries The Jacobi method} is based on splitting $A$ into $L + D + U$, where
+$L$ is strictly lower-triangular, $U$ is strictly upper triangular, and $D$ is
+diagonal. \cite{young2003} Then we rearrange the equation into
+$$
+Dx = b - (L + U)x \implies x = D^{-1} (b - (L + U)x)
+$$
+Which defines an iteration by repeatedly applying the right-hand side of  the
+equation to a starting vector $x_0$.
+The RHS can be computed in closed form \cite{young2003} as
+$$
+x_i^{(k+1)} = \frac 1 {a_{ii}}\left(
+    b_i - \sum_{j \neq i} a_{ij} x_j^{(k)}
+\right)
+$$
+Note that this does not even require rearranging the orriginal matrix in memory.
+Also note that there is no data-dependencies between $x_i$-values in the same
+iteration $k$! This method thus lends itself quite easily to parallellization.
+Additionally, a {\em modified version} of the Jacobi method, incorporating a
+relaxation factor $\omega$ to tune rate of convergence and stability
+conditions, is quite common.
+\begin{equation}
+    \label{eq:relaxed-jacobi}
+x_i^{(k+1)} = \frac \omega {a_{ii}}\left(
+    b_i - \sum_{j \neq i} a_{ij} x_j^{(k)}
+\right)
+\end{equation}
+This is more or less the form of the Jacobi method used in the pressure solver described by
+Gissler et. al. \cite{icsph}.
+
+\subsubsection*{Biconjugate gradient stabilized method}
+The Biconjugate Gradient Stabilized (BICGSTAB) algorithm is an iterative
+method for solutions of linear systems
+\cite{saad_iterative}.
+It is used to solve for the acceleration due to shear in the snow simulator.
+Chunno provides an implementation based on the Eigen library
+\cite{chunnoo2022simulating, eigen}.
+The mathematical background on Krylov subspace methods necesssary to derive
+the algorithm in full detail are unnecessary as far as this thesis is concerned,
+so the reader is referred either to the book Yousef Saad
+\cite[p. 216]{saad_iterative}
+for the full details, or to Chunnos implementation
+\cite[p. 13]{chunnoo2022simulating}.
+
+{\color{gray}
+\section{Tensor Physics and Snow Properties}
+\label{sec:elastiplastic}
+lame parameters, stress-strain relationship,
+deformation,
+compression,
+hardening,
+cauchy stress tensor,
+young modulus,
+poisson ratio
+
+i dont think i need this to explain my experiment,
+the tensor physics could probably be inlined briefly where needed.... maybe nice to have..
+
+ask anne
+}
+
+
 
 \section{An Implicit Compressible SPH Solver}
 \label{sec:icsph}
 \textit{This section is partially based on work from my autumn
-project, but significantly elaborated.}
+project, but significantly elaborated.}\\[.05em]
 
-\section{Neighborhood Search}
-\label{sec:neigh}
+\noindent
+The work in this thesis is investigating performance in an implementation of
+the simulation first described by Gissler et. al. \cite{icsph} implemented
+slightly simplified with an explicit integrator by Mathias Chunnoo 
+\cite{chunnoo2022simulating} in 2022.
+An explanation of the original paper, as well as differences in Chunnos implementation,
+is required to understand performance differences between them.
 
-\section{Chunno}
-\label{sec:chunno}
+The technique is a Lagrangian approach to snow simulation based on smoothed-particle
+hydrodynamics.
+Snow is modeled as an elastoplastic material that captures compression of snow due to
+pressure, and acceleration due to shear stress.
+The simulated material, like snow, counteracts elastic deformations.
+Plastic deformations are permanent and changes the snows stiffness.
+Like Gissler, we start by giving an overview of a simulation step.
 
-\section{Stiffness}
-\label{sec:stiffness}
-\textit{This section is partially based on work from my autumn
-project, but significantly elaborated.}
+\subsubsection*{Rest density and Lamé parameters}
+A simulation step begins by computing the current {\em rest density} $\rho^{(t)}_{0}$,
+\begin{equation}
+    \label{eq:rho_0}
+    \rho_{0}^{(t)} = \rho^{(t)} \left\lvert \det \Mat F^{(t)}_{E}\right\rvert \text,
+\end{equation}
+where $\Mat F_{E}$ is the deformation gradient matrix of particle $i$ from the previous
+iteration.
+In the first iteration, $\Mat F_E$ is initialized to the identity matrix, as no deformation
+has occured \cite{citation needed}.
+The rest density influences the Lamé parameters. Intuitively, as snow compresses it
+gets {\em denser}.
+As the density increases, snow gets harder, and thus resists deformation more strongly.
+The Lamé parameters for a given particle is computed with the following formulas,
+\begin{equation}
+    \label{eg:lame-parameters}
+    \begin{gathered}
+        G_i         = \frac E {2(1+\nu)} 
+                        \exp \left( \xi \frac {\rho_{0}^{(t)} - \rho_0} {\rho_{0}^{(t)}} \right) \\
+        \lambda_i   = \frac {E\nu} {(1+\nu)(1-2\nu)}
+                        \exp \left( \xi \frac {\rho_{0}^{(t)} - \rho_0} {\rho_{0}^{(t)}} \right)  \text,
+    \end{gathered}
+\end{equation}
+where $\xi$ is a hardening coefficient that can be set by the user to influence snow behaviour
+\cite{icsph}.
+$\rho_0$ is the simulation-wide rest density \cite{chunnoo2022simulating}.
+$E$ is the Young modulus, and $\nu$ is the Poisson-ratio.
+
+\subsubsection*{Correction Matrix}
+The {\em correction matrix} $L_i$ is computed, for every particle, using
+Equation~\ref{eq:correction-matrix}.
+
+\subsubsection*{Acceleration due to external forces}
+Acceleration due to gravity and adhesion is baked into $\vec a^{\text{other}}_i$.
+In our case, acceleration due to adhesion is neglected, because this force is too weak to
+affect the kinds of larger scale simulations the HPC lab is interested in \cite{chunnoo2022simulating}.
+The acceleration due to friction, $\vec a^{\text{friction}}_i$, is based on a discretization of the
+Laplacian, and is given by
+\begin{ceq}{chunnoo2022simulating}
+    \label{eq:acc-friction}
+    \vec a_i^{\text{friction}} =
+            \frac {\vec v_i + \Delta t \, \vec a_i^{\text{other}}}
+                {\Delta t - \Delta t^2 \frac {2 (d+2) \mu} {\rho_i} \sum_j V_j \frac {\vec x_i - \vec x_j} {||\vec x_i - \vec x_j||} \cdot (\nabla W)_{ij}}
+            - \frac {\vec v_i + \Delta t \, \vec a^{\text{other}}}
+                {\Delta t}
+%  (double check this, i tihnk there might be a mistake)
+\end{ceq}
+as the acceleration due to adhesion is neglected, $\vec a^{\text{other}}$ 
+is simply the acceleration due to gravity $\vec g$.
+$d$ is the dimensionality of the simulation domain, in other words 3.
+$\mu$ is a friction coefficient which the user can configure to tweak how strong the friction should be
+between snow and boundary particles.
+
+
+
+\subsubsection*{Pressure solver}
+The pressure solver computes the acceleration reacting to compression of the snow, 
+$\vec a^\lambda$ \cite{icsph}.
+You can derive an implicit formulation for the velocity \cite{icsph},
+\begin{equation}
+    \vec v^{(t + \Delta t)} = \vec v^* - 
+    \underbrace{\Delta t \frac 1 {\rho^{(t+\Delta t)}} \nabla p^{(t + \Delta t)}}_{ \Delta t\, \vec a^{\lambda}}
+    \text,
+\end{equation}
+where $\vec v^* =\vec v^{(t)} + \Delta t \, (\vec g + \vec a^{\text{friction}})$ is
+shorthand  for the predicted velocity based on an explicit Euler integration step 
+with the known accelerations,
+and the rest of the velocity stems from acceleration cause by the pressure 
+gradient \cite{chunnoo2022simulating},
+\begin{equation}
+    \label{eq:acc-grad-pressure}
+    \vec a^{\lambda} = - \frac 1 {\rho} \nabla p \text.
+\end{equation}
+This formulation is implicit because it incorporates a pressure term at the time step of the dependent variable, which has no
+explicit formula based on values at the current time step, and must be solved for.
+% double check this... not sure if its technically true
+
+Based on the law of mass-conservation, and an equation of state to establish a relationship between
+pressure and density, you can derive the following linear equation with the only unknown being
+$p^{(t + \Delta t)}$ \cite{icsph}.
+\begin{equation}
+    \label{eq:impl-pressure}
+    - \frac {\rho_0^{(t)}} {\lambda^{(t)}} p^{(t + \Delta t)} + \Delta t^2 (\nabla^2 p)^{(t + \Delta t)}
+    = \rho_0^{(t)} - \rho^{(t)} + \Delta t\, \rho^{(t)} (\nabla \cdot \vec v^*)
+\end{equation}
+By applying this equation to all particles, we get a {\em linear system of equations}, which we can solve
+to obtain the pressure $p^{(t + \Delta t)}_i$ at the position of every particle $i$.
+Finally, the pressure gradient gives us the acceleration counteracting compression of the snow.
+
+To solve Equation~\ref{eq:impl-pressure}, we use the SPH discretizied divergence
+$\nabla \cdot v^*$ (Equation~\ref{eq:difference-formula}), and the SPH discretized divergence of the pressure gradient
+$\nabla \cdot (\nabla p) = \nabla^2 p$ to compute the Laplacian (Equation~\ref{eq:pressure-grad} for pressure gradient).
+Notice that Equation~\ref{eq:impl-pressure} can be written as
+\begin{equation*}
+    \underbrace{\left(- \frac {\rho_0^{(t)}} {\lambda^{(t)}} + \Delta t^2 \nabla^2 \right)}_{A} p^{(t + \Delta t)}
+    = \rho_0^{(t)} - \rho^{(t)} + \Delta t\, \rho^{(t)} (\nabla \cdot \vec v^*)
+    \text,
+\end{equation*}
+using normal algebra rules for operators, as is quite common in physics.
+Obviously, this is no ordinary matrix; $A$ is a differential operator.
+Still, using the SPH discretization for the Laplacian, it is possible to 
+calculate diagonal elements to use when solving for the pressure.
+The diagonal elements are given by Gissler et. al. as
+\begin{equation}
+    \scalemath{0.85}{%
+    a_{ii} = - \frac {\rho_0} \lambda - \Delta t^2 \sum_j V_i V_j ||\nabla W_{ij}||^2
+             - \Delta t^2 \left(
+                \sum_j V_j \nabla W_{ij} + \sum_b V_b \nabla W_{ib}
+             \right) \sum_j V_j \nabla W_{ij}
+    }
+    \text.
+\end{equation}
+Do note the missing parameter $\psi$ from Gissler et. al. This is not needed because of
+the way the HPC lab simulator computes boundary volumes.
+\cite[p.~48]{chunnoo2022simulating}.
+
+Finally, the bits are in place to solve for the pressure.
+Start with the pressure $p^{(l)} = p^{(t)}$ from the previous iteration as the 
+initial guess,
+and compute $Ap^{(l)}$, the LHS of Equation~\ref{eq:impl-pressure},
+using the SPH discretization.
+Compute an updated pressure guess using the relaxed Jacobi iteration
+\begin{equation*}
+    p^{(l+1)} = p^{(l)} + \frac \omega {a_{ii}} \left(
+    b^{(l)} - Ap^{(l)}
+    \right)
+    \text,
+\end{equation*}
+where $b^{(l)}$ is the RHS of Equation~\ref{eq:impl-pressure}.
+And repeat until the error is below the tolerance.
+Note that the superscript index $l$ is the Jacobi iteration number,
+as we effectively iterate our way from $p^{(t)}$ to $p^{(t+\Delta t)}$.
+Gissler et. al. sets $\omega = 0.5$ \cite{icsph}, slowing down the convergence.
+In the HPC lab implementation, Chunno set $\omega = 1$,
+corresponding to a normal unrelaxed Jacobi iteration.
+This has a performance benefit and is possible because the HPC lab implementation
+is not interacting with other SPH systems
+\cite{chunnoo2022simulating}.
+
+
+\subsubsection*{Linear elasticity solver}
+The elasticity solver computes the accelaration $a^G$, counteracting shear \cite{icsph}.
+Because of the tensors involved, the formula looks unwieldy.
+However, the central idea is very similar:
+Let 
+$\vec v^* = \vec v^{(t)} + \Delta t (\vec a^{\text{other}} + \vec a^{\text{friction}} + \vec a^\lambda)$,
+like before, this is a crude predicted velocity including all known
+accelerations using explicit Euler integration.
+Using $\vec v^*$, we can compute a
+predicted deformation gradient $\Mat F^*_E = \Mat F^{(t)}_E + \Delta t\, \nabla \Vec v^* \,
+\Mat F^{(t)}_E$.
+Using this predicted deformation gradient, Gissler et. al. gives
+the following equation for $\vec a^G$:
+\begin{equation}
+    \label{eq:acceleration-G}
+\begin{split}
+    & \vec a^G - \frac {\Delta t^2} {\rho^{(t)}}
+        \nabla \cdot \left(
+            G^{(t)} \left[
+                \left(
+                    \nabla \vec a^G
+                \right) \Mat F^{(t)}_E
+                + \left(
+                        \left(\nabla \vec a^G\right) \Mat F^{(t)}_E 
+                \right)^\Tr
+            \right]
+        \right) \\
+        & = \frac 1 {\rho^{(t)}} \nabla \cdot \left(
+            2 G^{(t)} \left[
+                \frac 1 2 \left(
+                    \Mat F^*_E + (\Mat F^{*}_E)^\Tr
+                \right) - \Mat I
+            \right]
+        \right)
+        \text.
+\end{split}
+\end{equation}
+As we can see, the gradient of the acceleration in question, $\nabla \vec a^G$, appears 
+multiple places on the RHS of Equation~\ref{eq:acceleration-G}.
+There are gradients and divergences on both sides of the equation,
+on the RHS the divergence is hidden in the computation of the
+predicted deformation gradient.
+This all needs to be discretized using SPH.
+
+\subsubsection*{Gradient Discretization}
+
+We will use the difference formula
+(Equation~\ref{eq:difference-formula})
+with the correction matrix
+(Equation~\ref{eq:correction-matrix}) to capture the rotational motion
+of the velocity field in the velocity gradient more accurately
+\cite{icsph}.
+The corrected kernel gradient can be computed with the formula
+\begin{equation}
+    \tilde\nabla W_{ij} = \Mat L \nabla W_{ij} \text.
+\end{equation}
+However, Gissler et. al. found that using the corrected kernel gradient
+often leads to an overestimation of the change in volume
+\cite{icsph}.
+They present an alternative corrected gradient, where we can keep
+the change in volume from the uncorrected kernel gradient.
+Start by computing gradients with the {\em uncorrected kernel gradients}
+\begin{equation}
+    \begin{split}
+        \nabla v'_s & = \sum_j (\vec v_j - \vec v_i) \otimes
+            V_j \nabla W_{ij} \\
+        \nabla v'_b & = \sum_b (\vec v_b - \vec v_i) \otimes
+            V_b \nabla W_{ib} \,\text,
+    \end{split}
+\end{equation}
+Where $j$ are neighboring snow particles,
+and $b$ are neighboring boundary particles.
+The corrected gradient can then be computed as
+\begin{ceq}{icsph}
+    \tilde\nabla \vec v = \nabla \vec v'_s \Mat L^\Tr
+        + \frac 1 d \tr(\nabla \vec v'_b \Mat L^\Tr) \Mat I \,\text,
+\end{ceq}
+where $d$ is the dimensionality of the simulation domain,
+i. e. 3 in three-dimensional space.
+The divergence part of the {\em uncorrected gradient} is given by
+$$
+\Mat V' = \frac 1 r \tr(\nabla \vec v'_s + \nabla \vec v'_b) \Mat I \text,
+$$
+and the final gradient is computed using the divergence part of the 
+uncorrected gradient in combination with the curl part 
+$$
+\Mat R = \frac 1 2 (\tilde\nabla \vec v - (\tilde\nabla \vec v)^\Tr)
+$$
+and the shear part
+$$
+\Mat S = \frac 1 2 (\tilde\nabla \vec v + (\tilde\nabla \vec v)^\Tr)
+- \frac 1 d \tr(\tilde\nabla \vec v) \Mat I
+$$
+of the {\em corrected gradient}, using the simple formula
+\begin{equation}
+    \nabla \vec v = \Mat V' + \Mat R + \Mat S \text.
+\end{equation}
+As a vector gradient contains information about divergence, curl and
+shear, what we have essentially done is simply compute the curl- and shear
+parts using the corrected kernel gradient, and stitch it together with the
+divergence part from the uncorrected gradient which does not overestimate
+change in volume.
+
+\subsubsection*{Divergence Discretization}
+Now that the vector gradients in Equation~\ref{eq:acceleration-G}
+are dealt with, what remains in the equation are some divergences.
+The fields we are interested in taking the divergence of
+are essentially stress tensors \cite{icsph}.
+Taking the divergence of a second order tensor field is obviously
+different from the divergence formulas we developed earlier for vector fields.
+{\em For arithmetic purposes}, a rank two tensor in three-dimensional space
+can be thought of as a $3\times 3$ matrix.
+Gissler et. al. provides the following formula \cite{icsph} to
+compute the divergence of the tensor field.
+Let $\hat{\Mat \sigma}_i = \frac 1 d \tr(\Mat \sigma_i) \Mat I$, then
+\begin{equation}
+    \label{eq:div-discr}
+    \nabla \cdot \Mat \sigma_i
+        = \sum_j V_j (\Mat \sigma_i \tilde\nabla W_{ij}
+                    - \Mat \sigma_j \tilde\nabla W_{ji})
+        + \hat{\Mat \sigma}_i \sum_b V_b \tilde\nabla W_{ib}
+    \,\text,
+\end{equation}
+again using the corrected kernel gradient.
+As a quick sanity check, we can verify that what is going on here
+is essentially multiplying stress tensors ($3 \times 3$) by
+gradients of scalar fields ($3 \times 1$), and summing these,
+which indeed gives us a vector in three-dimensional space, which
+the acceleration should be.
+
+Now, with ways to discretize all the spatial derivatives in
+Equation~\ref{eq:acceleration-G}, we can solve the system iteratively
+to find $a^G_i$ for every particle $i$.
+There is some sublety here.
+In this system of equations, our solution is a bunch of vectors
+-- one for each particle.
+The RHS of our system is a vector for each particle, and thus
+the iteration method computing the LHS will calculate one
+vector for each particle as well.
+The solver of choice for Gissler et. al is a BiCGSTAB solver
+\cite{icsph}.
+
+\subsubsection*{Integration of velocity}
+The particle velocities are integrated using explicit Eulers method.
+\begin{equation}
+    \vec v^{(t + \Delta t)}
+        = \vec v^{(t)}
+        + \Delta t \, (\vec a^{\text{other}}
+                     + \vec a^{\text{friction}}
+                     + \vec a^\lambda
+                     + \vec a^G)
+\end{equation}
+
+
+\subsubsection*{Integration of deformation gradient}
+An intermediate deformation gradient is integrated using explicit Eulers method,
+\begin{equation}
+    \Mat F'_E = \Mat F^{(t)}_E
+        + \Delta t \, \nabla \vec v^{(t + \Delta t)} \Mat F^{(t)}_E
+    \text,
+\end{equation}
+however, there is a slight subtlety.
+If the deformation is {\em too large}, the snow should compress permanently
+\cite{icsph}.
+To determine if the deformation is above the threshold we use the
+singular value decomposition
+\cite{tma4145}: $\Mat F'_E = \Mat U \Mat \Sigma' \Mat V^\Tr$.
+We clamp the singular values within the range
+$[1 - \vartheta_c, 1+\vartheta_s]$,
+where $\vartheta_c, \vartheta_s$ are defined by the user.
+This gives us a new singular matrix $\Sigma$.
+We want to remove the rotational part of the deformation gradient
+\cite{icsph}.
+This can be done using the SVD by reassembling the deformation
+gradient as
+\begin{equation}
+    \Mat F^{(t + \Delta t)}_E = \Mat V \Mat \Sigma \Mat V^\Tr
+    \text.
+\end{equation}
+This follows from the fact that the singular value decomposition of
+a square matrix gives $U, V$ both also square but more importantly
+both orthogonal\cite{citation needed}.
+Orthogonal matrices represent rotations or reflections, and from
+elementary linear algebra courses it is known that the transpose
+of an orthogonal matrix is its inverse \cite{citation needed}.
+In other words, $\Mat V = (\Mat V^\Tr)^{-1}$ will exactly undo 
+the rotation or reflection of $\Mat V^\Tr$, and thus there is no
+rotational component left in $\Mat F^{(t + \Delta t)}_E$
+
+\subsubsection{Integration of particle positions}
+The particle positions are also simply integrated using explicit Eulers method,
+\begin{equation}
+    \vec x^{(t + \Delta t)} = \vec x^{(t)} + \Delta t \, \vec v^{(t + \Delta t)}
+    \text.
+\end{equation}
+Note that the particle positions are updated using {\em the entire}
+velocity without any clamping.
+The discrepancy between position and deformation gradient is what
+gives rise to the plastic deformation.
+
+\section{Explicit Combined Solver}
+At the time of writing, the HPC lab snow simulator utilizes a simplified solver
+to solve for the accelerations counteracting pressure and shear stress.
+This solver is explicit and combines the solvers by utilizing the full generalized
+Hooke's law \cite{chunnoo2022simulating}.
+The stress of any given particle can be expressed as
+\begin{equation}
+    \Mat \sigma^{(t)} = 2 G^{(t)} \Mat \epsilon^{(t)} 
+        + \lambda^{(t)} \tr(\Mat \epsilon^{(t)}) \Mat I
+        \text,
+\end{equation}
+and a particles strain can be compued using the formula
+\begin{ceq}{chunnoo2022simulating}
+    \Mat \epsilon^{(t)} = \frac 1 2 \left(
+        \Mat F_E^{(t)} + \Mat F_E^{(t)\Tr}
+    \right) - \Mat I
+    \text.
+\end{ceq}
+The accelration on a particle is then simply calculated as the divergence of the
+stress tensor (Equation~\ref{eq:div-discr}).
+\begin{equation}
+    \vec a^{\sigma} = \frac 1 {\rho^{(t)}} \nabla \cdot \Mat \sigma^{(t)}
+\end{equation}
 
